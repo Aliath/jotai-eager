@@ -213,6 +213,30 @@ describe('eagerAtom', () => {
     expect(store.get(fixedAtom)).toMatchInlineSnapshot(`"John:1:John"`);
   });
 
+  it('returns undefined when signal is aborted before async dependency resolves', async () => {
+    const aTask1 = deferred<number>();
+    const aTask2 = deferred<number>();
+    const aAtom = atom<Promise<number>>(aTask1.promise);
+    const bAtom = eagerAtom((get) => get(aAtom));
+
+    // the first read produces a pending promise p1 backed by signal s1
+    store.sub(bAtom, () => {});
+    const p1 = store.get(bAtom);
+    expect(p1).toBeInstanceOf(Promise);
+
+    // replacing aAtom's promise invalidates bAtom (it IS a direct dependency)
+    // and triggers a re-read, replacing p1 with p2 in the atom state
+    // jotai calls abortPromise(p1) → s1.abort()
+    store.set(aAtom, aTask2.promise);
+
+    // resolve the original promise after s1 is already aborted
+    // the p1.then callback sees signal.aborted and returns undefined
+    aTask1.resolve(42);
+
+    // p1 is typed as Promise<number> or number, but resolves to undefined :(
+    await expect(p1).resolves.toBe(42);
+  });
+
   describe('get.await', () => {
     it('awaits a regular Promise', async () => {
       const statusPromise = Promise.resolve<'success' | 'failure'>('success');
